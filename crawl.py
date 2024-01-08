@@ -1,10 +1,12 @@
 from selenium import webdriver
+import selenium
 from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 import time
 import os
 import glob
@@ -13,7 +15,7 @@ import pickle
 home = os.path.expanduser('~')
 path = os.path.join(home, 'Downloads')
 path_a = path + "/*" # * means (match all), if specific format required then *.csv This will get all the files ending with .csv
-saved_titles_path = "./titles_so_far.pkl"
+saved_titles_path = "./movies.txt"
 
 def hover_navbar(driver, actions, href_name, second_level_href_to_click=None):
     '''
@@ -23,12 +25,14 @@ def hover_navbar(driver, actions, href_name, second_level_href_to_click=None):
 
     try:
         WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.ID, "nmenu"))
+                EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'"+href_name+"')]"))
             )
     except:
         driver.quit()
 
     navbar_element = driver.find_element(By.XPATH, "//a[contains(@href,'"+href_name+"')]")
+    time.sleep(1)
+    print(href_name)
     driver.execute_script("arguments[0].scrollIntoView(true);", navbar_element)
     time.sleep(2)
     actions.move_to_element(navbar_element).perform()
@@ -62,13 +66,14 @@ def get_movies_from_list(driver, actions, list_class):
 def visit_movies(elements, actions, driver):
     # add the titles you have visited
     if os.path.exists(saved_titles_path):
-        with open(saved_titles_path, "rb") as f:
-            titles_so_far = pickle.load(f)
-            f.close()
+        with open("movies.txt", "r") as myfile:
+            titles_so_far = myfile.readlines()
+            titles_so_far = [text.replace("\n", "") for text in titles_so_far]
+            myfile.close()
     else:
         titles_so_far = []
 
-    for i in range(len(elements)):
+    for i in range(50, len(elements)):
         row = elements[i]
         title = row.get_attribute("title")
         driver.execute_script("arguments[0].scrollIntoView(true);", row)
@@ -85,31 +90,38 @@ def visit_movies(elements, actions, driver):
                 print("DOWNLOADED ALL")
                 # add to visited list if successful
                 if is_downloaded:
+                    print("aga saka misin")
                     titles_so_far.append(title)
+                    with open(saved_titles_path, "a") as myfile:
+                        myfile.write(title+"\n")
 
                 hover_navbar(driver, actions, href_name="/dizi/A/1", second_level_href_to_click="/imdb250dizi.html")
                 elements = get_movies_from_list(driver, actions, list_class="rowbeyaz")
-                if i == 2:
-                    with open(saved_titles_path, "wb") as fw:
-                        pickle.dump(titles_so_far, fw)
-                    driver.quit()
+        
+    driver.quit()
 
 def rename_latest(new_name, path):
     list_of_files = glob.glob(path_a)
     latest_file = max(list_of_files, key=os.path.getctime)
     #prints a.txt which was latest file i created
-    os.rename(latest_file, path+"/"+new_name)
+    os.rename(latest_file, path+"/"+new_name+".zip")
 
 def extract_intersected_rips(turkish_rip_types, english_rip_types):
     intersection_rips = list(set(turkish_rip_types).intersection(set(english_rip_types)))
-
     if intersection_rips != []:
         return intersection_rips[0]
     else:
         for tr_rip in turkish_rip_types:
+
             tr_rip_shortcut = tr_rip.replace("\t", "").replace("\n", "").replace("  ", "")
+            tr_rip_multiple = tr_rip_shortcut.split("/")
+            tr_rip_multiple = [text.replace(" ", "") for text in tr_rip_multiple]
+
             for en_rip in english_rip_types:
+
                 en_rip_shortcut = en_rip.replace("\t", "").replace("\n", "").replace("  ", "")
+                en_rip_multiple = en_rip_shortcut.split("/")
+                en_rip_multiple = [text.replace(" ", "") for text in en_rip_multiple]
 
                 if tr_rip_shortcut in en_rip_shortcut:
                     intersection_rips = [tr_rip, en_rip]
@@ -117,6 +129,11 @@ def extract_intersected_rips(turkish_rip_types, english_rip_types):
                 elif en_rip_shortcut in tr_rip_shortcut:
                     intersection_rips = [tr_rip, en_rip]
                     return intersection_rips
+                else:
+                    for english_rip_type in en_rip_multiple:
+                        if english_rip_type in tr_rip_multiple:
+                            intersection_rips = [tr_rip, en_rip]
+                            return intersection_rips
         return None
 
 def download_subtitles_from_movie_page(actions, driver, title):
@@ -124,34 +141,68 @@ def download_subtitles_from_movie_page(actions, driver, title):
     # get the season links
     locator = "//div[contains(@class,'altyazi-list-wrapper')]//a[contains(@class, 'new-toggle')]"
     rows = driver.find_elements(By.XPATH, locator)
-    if rows == None:
+    if rows == []:
         num_of_seasons = 1
-    else:  
+        latest_season = 1
+    else:
+        latest_season = int(rows[0].text[0])
         num_of_seasons = len(rows) // 2
 
     print("NUM SEASONS OF THE TV SHOW: ", num_of_seasons)
 
-    sub_page_element = driver.find_element(By.XPATH, ".//div[contains(@class, 'sub-container nleft')]//a[contains(@data-href, 'altyazilar')]")
-    actions.move_to_element(sub_page_element).click().perform()
-    time.sleep(1)
-
-    for season in range(num_of_seasons, 0, -1):
+    try:
+        sub_page_element = driver.find_element(By.XPATH, ".//div[contains(@class, 'sub-container nleft')]//a[contains(@data-href, 'altyazilar')]")
+        actions.move_to_element(sub_page_element).click().perform()
+        time.sleep(1)
+    except selenium.common.exceptions.NoSuchElementException:
+        return False
+    
+    for season in range(latest_season, 0, -1):
 
         season_tag = "sezon_"+str(season)
         season_locator_id = "sz_"+str(season)
         # click to the season
         season_locator = "//div[contains(@class,'pagin ta-container mb4')]/a[contains(@id, '"+season_locator_id+"')]"
-        season_element = driver.find_element(By.XPATH, season_locator)
-        driver.execute_script("arguments[0].scrollIntoView(true);", season_element)
-        time.sleep(2)
-        actions.move_to_element(season_element).click().perform()
-        time.sleep(1)
+        try:
+            season_element = driver.find_element(By.XPATH, season_locator)
+            driver.execute_script("arguments[0].scrollIntoView(true);", season_element)
+            time.sleep(2)
+            actions.move_to_element(season_element).click().perform()
+            time.sleep(1)
+        except selenium.common.exceptions.NoSuchElementException:
+            if season != latest_season:
+                break
+            else:
+                return False
 
         locator = "//div[contains(@class,'altyazi-list-wrapper')]//span[contains(@class, 'flagtr')]/ancestor::div[contains(@class, '"+season_tag+"')]"
-        turkish_sub_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, locator)))
+        try:
+            turkish_sub_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, locator)))
+        except selenium.common.exceptions.TimeoutException :
+            if season != latest_season:
+                break
+            else:
+                return False
+        except selenium.common.exceptions.NoSuchElementException:
+            if season != latest_season:
+                break
+            else:
+                return False
 
         locator = "//div[contains(@class,'altyazi-list-wrapper')]//span[contains(@class, 'flagen')]/ancestor::div[contains(@class, '"+season_tag+"')]"
-        english_sub_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, locator)))
+        try:
+            english_sub_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, locator)))
+        except selenium.common.exceptions.TimeoutException:
+            if season != latest_season:
+                break
+            else:
+                return False
+        except selenium.common.exceptions.NoSuchElementException:
+            if season != latest_season:
+                break
+            else:
+                return False
+
 
         turkish_rip_types = []
         for row in turkish_sub_rows:
@@ -213,7 +264,10 @@ def download_subtitles_from_movie_page(actions, driver, title):
     return True
 
 
-driver = webdriver.Safari()
+options = webdriver.ChromeOptions()
+options.headless = True
+driver = webdriver.Chrome(options=options)
+
 driver.get("https://turkcealtyazi.org/index.php")
 driver.maximize_window()
 actions = ActionChains(driver)
